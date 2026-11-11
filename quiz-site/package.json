@@ -1,0 +1,13 @@
+{
+  "name": "qr-quiz-ranking",
+  "version": "1.0.0",
+  "description": "QR로 참여하는 학생 퀴즈/설문 랭킹 사이트",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "private": true
+}
