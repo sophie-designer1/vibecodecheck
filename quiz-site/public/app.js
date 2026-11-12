@@ -128,7 +128,7 @@ async function hostView(id) {
   app.innerHTML = `
     <div class="card center">
       <h1>${esc(quiz.title)}</h1>
-      <p class="mute">학생들이 QR을 찍고 닉네임을 정해 입장하면 대기실에 모여요 · <span class="pill" id="state"></span></p>
+      <p class="mute"><span id="hint"></span> <span class="pill" id="state"></span></p>
       <div class="qr"><img alt="참여 QR 코드" width="280" height="280" style="width:100%;height:auto" src="/api/qr?text=${encodeURIComponent(joinUrl)}"></div>
       <div class="link">${esc(joinUrl)}</div>
       <p class="mute" id="lanwarn" hidden>⚠️ 지금 주소가 <b>localhost</b>예요. 학생 폰에서는 열리지 않으니, 서버 터미널에 나온 "같은 와이파이 학생용 주소"나 배포된 주소로 이 화면을 다시 여세요.</p>
@@ -146,6 +146,7 @@ async function hostView(id) {
   let status = quiz.status, count = quiz.count;
   const LABEL = { lobby: '대기실 · 입장 받는 중', running: '진행 중', closed: '마감됨' };
   const paint = () => {
+    $('#hint').textContent = status === 'lobby' ? 'QR을 찍고 닉네임을 정해 입장하면 대기실에 모여요 ·' : status === 'running' ? '학생들이 문제를 푸는 중이에요 ·' : '참여가 끝났어요 ·';
     $('#state').textContent = LABEL[status]; $('#state').classList.toggle('on', status !== 'closed');
     const b = $('#main');
     b.textContent = status === 'lobby' ? `▶ 시작하기 (${count}명 대기)` : status === 'running' ? '■ 마감하기' : '다시 열기';
@@ -197,10 +198,8 @@ function renderResults(el, r, myName, showTotal) {
   el.innerHTML = `<div class="card"><h2>🏆 실시간 순위 <span class="mute" style="font-weight:400;font-size:.85rem">${r.rows.length}명 완료${showTotal ? ` / 입장 ${r.participants}명` : ''}</span></h2>
     ${r.rows.length ? `
     ${top.length ? `<div class="podium">${top.map(t => `<div class="p${t.rank > 3 ? 3 : t.rank}"><b>${medal(t.rank)}</b><span>${esc(t.name)}</span><span class="mute">${t.score}/${t.total}</span></div>`).join('')}</div>` : ''}
-    <table><thead><tr><th>순위</th><th>이름</th><th class="n">점수</th><th class="n">시간</th></tr></thead><tbody>
-    ${r.rows.map(x => `<tr class="${x.name === myName ? 'me' : ''}"><td class="rank r${x.rank}">${medal(x.rank)}</td><td>${esc(x.name)}</td><td class="n">${x.score}/${x.total}</td><td class="n">${fmtTime(x.ms)}</td></tr>`).join('')}
-    </tbody></table>
-    <p class="mute" style="font-size:.85rem;margin-bottom:0">점수가 같으면 더 빨리 푼 사람이 위에 있어요.</p>`
+    <div class="lb">${r.rows.map(x => `<div class="lb-row r${x.rank} ${x.name === myName ? 'me' : ''}"><span class="lb-rank">${medal(x.rank)}</span><span class="lb-name">${esc(x.name)}</span><span class="lb-score">${x.score}/${x.total}</span><span class="lb-time mute">${fmtTime(x.ms)}</span></div>`).join('')}</div>
+    <p class="mute" style="font-size:.85rem;margin:14px 0 0">점수가 같으면 더 빨리 푼 사람이 위에 있어요.</p>`
     : '<p class="mute center">아직 완료한 학생이 없어요. 곧 순위가 나타납니다!</p>'}${pending}</div>`;
 }
 
@@ -273,7 +272,7 @@ function playView(id, quiz, name, token) {
   const show = () => {
     const q = quiz.questions[i];
     app.innerHTML = `<div class="bar"><i style="width:${i / quiz.questions.length * 100}%"></i></div>
-      <div class="card"><div class="mute">${i + 1} / ${quiz.questions.length}</div>
+      <div class="card"><span class="qnum">${i + 1} / ${quiz.questions.length}</span>
       <h2 style="font-size:1.3rem;margin-top:.3em">${esc(q.text)}</h2>
       <div class="choices">${q.options.map((o, k) => `<button type="button" class="choice" data-k="${k}">${esc(o)}</button>`).join('')}</div>
       <p class="err" id="err" role="alert"></p></div>`;
@@ -308,7 +307,7 @@ function finishView(id, quiz, { name, result }) {
     </div>
     <div class="card"><h2>정답 확인</h2>${quiz.questions.map((q, i) => {
       const rv = result.review[i]; const ok = rv.yours === rv.answer;
-      return `<div style="margin:10px 0"><b>${i + 1}. ${esc(q.text)}</b>
+      return `<div class="review ${ok ? 'ok' : 'no'}"><b>${i + 1}. ${esc(q.text)}</b>
         <div>${ok ? '⭕' : '❌'} 내 답: ${rv.yours >= 0 ? esc(q.options[rv.yours]) : '(무응답)'}${ok ? '' : ` · <span style="color:var(--ok)">정답: ${esc(q.options[rv.answer])}</span>`}</div></div>`;
     }).join('')}</div>
     <div id="live"></div>`;
