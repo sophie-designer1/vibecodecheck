@@ -90,6 +90,10 @@ function supabaseStore(url, key) {
 function createStore() {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
   if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) return supabaseStore(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  if (process.env.VERCEL) { // 서버리스에는 영구 파일 저장이 없으므로 설정 누락을 명확히 알림
+    const fail = () => Promise.reject({ code: 503, msg: '서버 설정이 끝나지 않았어요: Supabase 환경변수(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)를 Vercel에 등록해 주세요' });
+    return new Proxy({ kind: 'unconfigured' }, { get: (t, k) => (k in t ? t[k] : fail) });
+  }
   return fileStore(process.env.DATA_FILE || path.join(__dirname, 'data', 'quizzes.json'));
 }
 module.exports = { createStore, fileStore, supabaseStore };
