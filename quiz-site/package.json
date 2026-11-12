@@ -9,5 +9,8 @@
   "dependencies": {
     "qrcode": "^1.5.4"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
 }

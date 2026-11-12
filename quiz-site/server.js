@@ -5,27 +5,15 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
+const { createStore } = require('./store');
 
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'quizzes.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_BODY = 200 * 1024;
 const MAX_QUESTIONS = 50;
 const MAX_PARTICIPANTS = 500;
 
-// ---------- 저장소 (메모리 + JSON 파일) ----------
-let db = { quizzes: {} };
-try { db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (_) { /* 처음 실행 */ }
-let saveTimer = null;
-function save() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-    const tmp = DATA_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(db));
-    fs.renameSync(tmp, DATA_FILE);
-  }, 200);
-}
+const store = createStore();
 const newId = () => crypto.randomBytes(4).toString('hex'); // 8자리
 const newKey = () => crypto.randomBytes(12).toString('hex');
 const safeEq = (a, b) => {
@@ -39,6 +27,7 @@ function send(res, code, body, type = 'application/json; charset=utf-8') {
   res.end(type.startsWith('application/json') ? JSON.stringify(body) : body);
 }
 function readJson(req) {
+  if (req.body !== undefined && req.body !== null && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) return Promise.resolve(req.body); // Vercel이 미리 파싱한 경우
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
     req.on('data', c => {
@@ -55,20 +44,20 @@ function readJson(req) {
 const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
 
 // status: lobby(대기실) → running(진행 중) → closed(마감)
-function publicQuiz(q) {
+function publicQuiz(q, entries) {
   return {
     id: q.id, title: q.title, type: q.type, status: q.status,
-    count: q.entries.length,
-    names: q.status === 'lobby' ? q.entries.map(e => e.name) : undefined,
+    count: entries.length,
+    names: q.status === 'lobby' ? entries.map(e => e.name) : undefined,
     // 시작 전에는 문제를 보내지 않음 (미리 보기 방지). 정답은 항상 보내지 않음
     questionCount: q.questions.length,
     questions: q.status === 'lobby' ? [] : q.questions.map(x => ({ text: x.text, options: x.options })),
   };
 }
 
-function leaderboard(q) {
+function leaderboard(q, entries) {
   const total = q.questions.length;
-  const rows = q.entries.filter(e => e.done).map(e => ({ name: e.name, score: e.score, total, ms: e.ms }));
+  const rows = entries.filter(e => e.done).map(e => ({ name: e.name, score: e.score, total, ms: e.ms }));
   rows.sort((a, b) => b.score - a.score || a.ms - b.ms || a.name.localeCompare(b.name));
   let rank = 0, prev = null;
   rows.forEach((r, i) => {
@@ -79,8 +68,8 @@ function leaderboard(q) {
   return rows;
 }
 
-function surveyResults(q) {
-  const done = q.entries.filter(e => e.done);
+function surveyResults(q, entries) {
+  const done = entries.filter(e => e.done);
   return {
     responses: done.length,
     questions: q.questions.map((qu, qi) => {
@@ -132,22 +121,25 @@ async function api(req, res, url) {
 
   if (m === 'POST' && parts.length === 1) {
     const v = validateCreate(await readJson(req));
-    if (Object.keys(db.quizzes).length > 5000) return send(res, 507, { error: '저장 공간이 가득 찼습니다' });
-    const q = { id: newId(), hostKey: newKey(), ...v, status: 'lobby', createdAt: Date.now(), entries: [] };
-    db.quizzes[q.id] = q; save();
+    if ((await store.count()) > 5000) return send(res, 507, { error: '저장 공간이 가득 찼습니다' });
+    const q = { id: newId(), hostKey: newKey(), ...v, status: 'lobby', createdAt: Date.now() };
+    await store.createQuiz(q);
     return send(res, 201, { id: q.id, hostKey: q.hostKey });
   }
 
-  const q = db.quizzes[parts[1]];
+  const id = /^\w{1,32}$/.test(parts[1] || '') ? parts[1] : '';
+  const q = id && await store.getQuiz(id);
   if (!q) return send(res, 404, { error: '퀴즈를 찾을 수 없습니다' });
   const sub = parts[2];
 
-  if (m === 'GET' && !sub) return send(res, 200, publicQuiz(q));
+  if (m === 'GET' && !sub) return send(res, 200, publicQuiz(q, await store.listEntries(id)));
 
   if (m === 'GET' && sub === 'results') {
+    const entries = await store.listEntries(id);
+    const waiting = entries.filter(e => !e.done).map(e => e.name);
     return send(res, 200, q.type === 'quiz'
-      ? { type: 'quiz', status: q.status, waiting: q.entries.filter(e => !e.done).map(e => e.name), title: q.title, total: q.questions.length, participants: q.entries.length, rows: leaderboard(q) }
-      : { type: 'survey', status: q.status, waiting: q.entries.filter(e => !e.done).map(e => e.name), title: q.title, ...surveyResults(q) });
+      ? { type: 'quiz', status: q.status, waiting, title: q.title, total: q.questions.length, participants: entries.length, rows: leaderboard(q, entries) }
+      : { type: 'survey', status: q.status, waiting, title: q.title, ...surveyResults(q, entries) });
   }
 
   if (m === 'POST' && sub === 'join') {
@@ -155,17 +147,16 @@ async function api(req, res, url) {
     const name = clean(b.name, 20);
     if (q.status === 'closed') return send(res, 403, { error: '참여가 마감되었습니다' });
     if (!name) return send(res, 400, { error: '이름을 입력하세요' });
-    if (q.entries.length >= MAX_PARTICIPANTS) return send(res, 403, { error: '참여 인원이 가득 찼습니다' });
-    if (q.entries.some(e => e.name.toLowerCase() === name.toLowerCase()))
-      return send(res, 409, { error: '이미 사용 중인 이름입니다. 다른 이름을 입력하세요' });
+    if ((await store.listEntries(id)).length >= MAX_PARTICIPANTS) return send(res, 403, { error: '참여 인원이 가득 찼습니다' });
     const entry = { name, token: newKey(), startedAt: q.status === 'running' ? Date.now() : null, done: false, answers: [], score: 0, ms: 0 };
-    q.entries.push(entry); save();
+    try { await store.addEntry(id, entry); }
+    catch (e) { if (e.conflict) return send(res, 409, { error: '이미 사용 중인 이름입니다. 다른 이름을 입력하세요' }); throw e; }
     return send(res, 200, { token: entry.token });
   }
 
   if (m === 'POST' && sub === 'submit') {
     const b = await readJson(req);
-    const e = q.entries.find(x => safeEq(x.token, b.token ?? ''));
+    const e = await store.getEntryByToken(id, String(b.token ?? ''));
     if (!e) return send(res, 403, { error: '참여 정보를 찾을 수 없습니다' });
     if (e.done) return send(res, 409, { error: '이미 제출했습니다' });
     if (q.status !== 'running') return send(res, 403, { error: q.status === 'lobby' ? '아직 시작 전입니다' : '참여가 마감되었습니다' });
@@ -177,9 +168,9 @@ async function api(req, res, url) {
     e.ms = Date.now() - e.startedAt;
     e.done = true;
     if (q.type === 'quiz') e.score = e.answers.filter((a, i) => a === q.questions[i].answer).length;
-    save();
+    await store.saveEntry(id, e);
     if (q.type === 'survey') return send(res, 200, { ok: true });
-    const board = leaderboard(q);
+    const board = leaderboard(q, await store.listEntries(id));
     const me = board.find(r => r.name === e.name);
     return send(res, 200, {
       score: e.score, total: q.questions.length, ms: e.ms, rank: me.rank, participants: board.length,
@@ -194,19 +185,16 @@ async function api(req, res, url) {
   if (m === 'POST' && sub === 'status') {
     const b = await readJson(req);
     if (!['running', 'closed'].includes(b.status)) return send(res, 400, { error: '잘못된 상태' });
-    if (b.status === 'running' && q.status === 'lobby') {
-      const now = Date.now(); // 모두 같은 시각에 시작 → 공정한 시간 측정
-      q.startedAt = now; q.entries.forEach(e => (e.startedAt = now));
-    }
-    q.status = b.status; save();
-    return send(res, 200, { status: q.status });
+    if (b.status === 'running' && q.status === 'lobby') await store.start(id, Date.now()); // 모두 같은 시각에 시작 → 공정한 시간 측정
+    else await store.setStatus(id, b.status);
+    return send(res, 200, { status: b.status });
   }
   if (m === 'POST' && sub === 'reset') {
-    q.entries = []; q.status = 'lobby'; q.startedAt = null; save();
+    await store.reset(id);
     return send(res, 200, { ok: true });
   }
   if (m === 'DELETE' && !sub) {
-    delete db.quizzes[q.id]; save();
+    await store.deleteQuiz(id);
     return send(res, 200, { ok: true });
   }
   return send(res, 404, { error: '없는 API' });
@@ -222,7 +210,7 @@ function serveStatic(res, pathname) {
   send(res, 200, fs.readFileSync(file), TYPES[path.extname(file)] || 'application/octet-stream');
 }
 
-const server = http.createServer(async (req, res) => {
+async function handler(req, res) {
   const url = new URL(req.url, 'http://localhost');
   try {
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
@@ -233,7 +221,8 @@ const server = http.createServer(async (req, res) => {
     console.error(err);
     send(res, 500, { error: '서버 오류' });
   }
-});
+}
+const server = http.createServer(handler);
 
 if (require.main === module) {
   server.listen(PORT, () => {
@@ -244,3 +233,4 @@ if (require.main === module) {
   });
 }
 module.exports = server;
+module.exports.handler = handler;

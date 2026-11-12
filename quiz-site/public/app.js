@@ -173,7 +173,7 @@ async function hostView(id) {
       paint(); renderResults(live, r, null, true);
     } catch (_) { /* 일시적 오류 무시 */ }
   };
-  paint(); refresh(); timer = setInterval(refresh, 1500);
+  paint(); refresh(); timer = setInterval(refresh, 2000);
 }
 
 // ---------- 결과 / 순위 ----------
@@ -264,7 +264,7 @@ function lobbyView(id, name, token) {
       $('#who').innerHTML = `<p class="mute">${q.count}명 대기 중</p>` + chips(q.names || []);
     } catch (e) { /* 재시도 */ }
   };
-  tick(); timer = setInterval(tick, 1200);
+  tick(); timer = setInterval(tick, 2000);
 }
 
 function playView(id, quiz, name, token) {

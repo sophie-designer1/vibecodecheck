@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/q/:id", "destination": "/index.html" },
+    { "source": "/r/:id", "destination": "/index.html" },
+    { "source": "/host/:id", "destination": "/index.html" }
+  ]
+}
