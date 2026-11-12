@@ -15,7 +15,7 @@ h1{font-size:1.6rem;font-weight:800;margin:.2em 0 .4em;line-height:1.25}
 h2{font-size:1.15rem;font-weight:800;margin:0 0 .7em}
 .mute{color:var(--mute);font-weight:600}.center{text-align:center}
 
-.card{background:var(--panel);border-radius:16px;padding:30px 26px;margin-bottom:24px;box-shadow:0 10px 30px rgba(20,20,40,.08)}
+.card{background:var(--panel);border-radius:16px;padding:30px 26px;margin-bottom:36px;box-shadow:0 10px 30px rgba(20,20,40,.08)}
 
 /* 입력 */
 label{font-weight:800;font-size:.9rem}
